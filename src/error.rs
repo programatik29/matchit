@@ -55,10 +55,8 @@ impl std::error::Error for InsertError {}
 
 impl InsertError {
     // TODO: make this more robust
-    pub(crate) fn conflict(path: &str, prefix: &[u8], route: &[u8]) -> Self {
-        fn try_get_conflict(path: &str, prefix: &[u8], route: &[u8]) -> Option<String> {
-            let route = str::from_utf8(route).ok()?;
-            let prefix = str::from_utf8(prefix).ok()?;
+    pub(crate) fn conflict(path: &str, prefix: &str, route: &str) -> Self {
+        fn try_get_conflict(path: &str, prefix: &str, route: &str) -> Option<String> {
             let prefix = path.get(..path.rfind(prefix)?)?;
             Some([prefix, route].join(""))
         }

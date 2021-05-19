@@ -33,7 +33,7 @@ enum NodeType {
 /// Priority is just the number of values registered in sub nodes
 /// (children, grandchildren, and so on..).
 pub struct Node<T> {
-    path: Vec<u8>,
+    path: String,
     wild_child: bool,
     node_type: NodeType,
     indices: Vec<u8>,
@@ -46,7 +46,7 @@ pub struct Node<T> {
 impl<T> Default for Node<T> {
     fn default() -> Self {
         Self {
-            path: Vec::new(),
+            path: String::new(),
             wild_child: false,
             node_type: NodeType::Static,
             indices: Vec::new(),
@@ -80,23 +80,23 @@ impl<T> Node<T> {
 
         // Empty tree
         if self.path.is_empty() && self.children.is_empty() {
-            self.insert_child(route.as_bytes(), &route, val)?;
+            self.insert_child(&route, &route, val)?;
             self.node_type = NodeType::Root;
             return Ok(());
         }
 
-        self.insert_helper(route.as_bytes(), &route, val)
+        self.insert_helper(&route, &route, val)
     }
 
     #[inline]
-    fn insert_helper(&mut self, mut prefix: &[u8], route: &str, val: T) -> Result<(), InsertError> {
+    fn insert_helper(&mut self, mut prefix: &str, route: &str, val: T) -> Result<(), InsertError> {
         // Find the longest common prefix.
         // This also implies that the common prefix contains no ':' or '*'
         // since the existing key can't contain those chars.
         let mut i = 0;
         let max = min(prefix.len(), self.path.len());
 
-        while i < max && prefix[i] == self.path[i] {
+        while i < max && prefix.as_bytes()[i] == self.path.as_bytes()[i] {
             i += 1;
         }
 
@@ -114,7 +114,7 @@ impl<T> Node<T> {
             mem::swap(&mut self.children, &mut child.children);
 
             self.children = vec![child];
-            self.indices = self.path[i..=i].to_owned();
+            self.indices = self.path.as_bytes()[i..=i].to_owned();
             self.path = prefix[..i].to_owned();
             self.wild_child = false;
         }
@@ -127,7 +127,7 @@ impl<T> Node<T> {
                 return self.children[0].wild_child_conflict(prefix, route, val);
             }
 
-            let idxc = prefix[0];
+            let idxc = prefix.as_bytes()[0];
 
             // `/` after param
             if self.node_type == NodeType::Param && idxc == b'/' && self.children.len() == 1 {
@@ -197,7 +197,7 @@ impl<T> Node<T> {
     #[inline]
     fn wild_child_conflict(
         &mut self,
-        prefix: &[u8],
+        prefix: &str,
         route: &str,
         val: T,
     ) -> Result<(), InsertError> {
@@ -209,7 +209,7 @@ impl<T> Node<T> {
       // Adding a child to a CatchAll Node is not possible
       && self.node_type != NodeType::CatchAll
       // Check for longer wildcard, e.g. :name and :names
-      && (self.path.len() >= prefix.len() || prefix[self.path.len()] == b'/')
+      && (self.path.len() >= prefix.len() || prefix.as_bytes()[self.path.len()] == b'/')
         {
             self.insert_helper(prefix, route, val)
         } else {
@@ -217,7 +217,7 @@ impl<T> Node<T> {
         }
     }
 
-    fn insert_child(&mut self, mut prefix: &[u8], route: &str, val: T) -> Result<(), InsertError> {
+    fn insert_child(&mut self, mut prefix: &str, route: &str, val: T) -> Result<(), InsertError> {
         let (wildcard, wildcard_index, valid) = find_wildcard(&prefix);
 
         if wildcard_index.is_none() {
@@ -246,7 +246,7 @@ impl<T> Node<T> {
         }
 
         // Param
-        if wildcard[0] == b':' {
+        if wildcard.as_bytes()[0] == b':' {
             // Insert prefix before the current wildcard
             if wildcard_index > 0 {
                 self.path = prefix[..wildcard_index].to_owned();
@@ -286,7 +286,7 @@ impl<T> Node<T> {
             return Err(InsertError::InvalidCatchAll);
         }
 
-        if !self.path.is_empty() && self.path[self.path.len() - 1] == b'/' {
+        if !self.path.is_empty() && self.path.as_bytes()[self.path.len() - 1] == b'/' {
             return Err(InsertError::conflict(&route, &prefix, &self.path));
         }
 
@@ -295,7 +295,7 @@ impl<T> Node<T> {
             .checked_sub(1)
             .ok_or(InsertError::MalformedPath)?;
 
-        if prefix[wildcard_index] != b'/' {
+        if prefix.as_bytes()[wildcard_index] != b'/' {
             return Err(InsertError::InvalidCatchAll);
         }
 
@@ -379,7 +379,7 @@ impl<T> Node<T> {
         'walk: loop {
             let prefix = &current.path;
             if path.len() > prefix.len() {
-                if prefix == &path.as_bytes()[..prefix.len()] {
+                if prefix.as_bytes() == &path.as_bytes()[..prefix.len()] {
                     path = &path[prefix.len()..];
 
                     // If this node does not have a wildcard (Param or CatchAll)
@@ -387,11 +387,9 @@ impl<T> Node<T> {
                     // to walk down the tree
                     if !current.wild_child {
                         let idxc = path.as_bytes()[0];
-                        for (i, c) in current.indices.iter().enumerate() {
-                            if idxc == *c {
-                                current = &current.children[i];
-                                continue 'walk;
-                            }
+                        if let Some(i) = current.indices.iter().position(|&c| c == idxc) {
+                            current = &current.children[i];
+                            continue 'walk;
                         }
                         // Nothing found.
                         // We can recommend to redirect to the same URL without a
@@ -409,7 +407,7 @@ impl<T> Node<T> {
                                 end += 1;
                             }
 
-                            params.push(str::from_utf8(&current.path[1..]).unwrap(), &path[..end]);
+                            params.push(&current.path[1..], &path[..end]);
 
                             // we need to go deeper!
                             if end < path.len() {
@@ -431,7 +429,7 @@ impl<T> Node<T> {
                                 current = &current.children[0];
                                 // No value found. Check if a value for this path + a
                                 // trailing slash exists for TSR recommendation
-                                let tsr = (current.path == [b'/'] && current.value.is_some())
+                                let tsr = (current.path == "/" && current.value.is_some())
                                     || (current.path.is_empty() && current.indices == [b'/']);
                                 return Err(MatchError::new(tsr));
                             }
@@ -439,7 +437,7 @@ impl<T> Node<T> {
                             return Err(MatchError::new(false));
                         }
                         NodeType::CatchAll => {
-                            params.push(str::from_utf8(&current.path[2..]).unwrap(), path);
+                            params.push(&current.path[2..], path);
 
                             return match current.value.as_ref() {
                                 Some(value) => Ok(Match { value, params }),
@@ -449,7 +447,7 @@ impl<T> Node<T> {
                         _ => unreachable!(),
                     }
                 }
-            } else if path.as_bytes() == prefix {
+            } else if path == prefix {
                 // We should have reached the node containing the value.
                 // Check if this node has a value registered.
                 if let Some(value) = current.value.as_ref() {
@@ -482,8 +480,8 @@ impl<T> Node<T> {
             // extra trailing slash if a leaf exists for that path
             let tsr = (path == "/")
                 || (prefix.len() == path.len() + 1
-                    && prefix[path.len()] == b'/'
-                    && path.as_bytes() == &prefix[..prefix.len() - 1]
+                    && prefix.as_bytes()[path.len()] == b'/'
+                    && path.as_bytes() == &prefix.as_bytes()[..prefix.len() - 1]
                     && current.value.is_some());
 
             return Err(MatchError::new(tsr));
@@ -511,15 +509,11 @@ impl<T> Node<T> {
         fix_trailing_slash: bool,
     ) -> Option<String> {
         let path = path.as_ref();
-        let mut insensitive_path = Vec::with_capacity(path.len() + 1);
-        let found = self.path_ignore_case_helper(
-            path.as_bytes(),
-            &mut insensitive_path,
-            [0; 4],
-            fix_trailing_slash,
-        );
+        let mut insensitive_path = String::with_capacity(path.len() + 1);
+        let found =
+            self.path_ignore_case_helper(path, &mut insensitive_path, [0; 4], fix_trailing_slash);
         if found {
-            Some(String::from_utf8(insensitive_path).unwrap())
+            Some(insensitive_path)
         } else {
             None
         }
@@ -527,22 +521,22 @@ impl<T> Node<T> {
 
     fn path_ignore_case_helper(
         &self,
-        mut path: &[u8],
-        insensitive_path: &mut Vec<u8>,
+        mut path: &str,
+        insensitive_path: &mut String,
         mut buf: [u8; 4],
         fix_trailing_slash: bool,
     ) -> bool {
-        let lower_path: &[u8] = &path.to_ascii_lowercase();
+        let lower_path: &str = &path.to_ascii_lowercase();
         if lower_path.len() >= self.path.len()
             && (self.path.is_empty()
                 || lower_path[1..self.path.len()].eq_ignore_ascii_case(&self.path[1..]))
         {
-            insensitive_path.extend_from_slice(&self.path);
+            insensitive_path.push_str(&self.path);
 
             path = &path[self.path.len()..];
 
             if !path.is_empty() {
-                let cached_lower_path = <&[u8]>::clone(&lower_path);
+                let cached_lower_path = lower_path.clone();
 
                 // If this node does not have a wildcard (param or catchAll) child,
                 // we can just look up the next child node and continue to walk down
@@ -561,13 +555,9 @@ impl<T> Node<T> {
                         let mut off = 0;
                         for j in 0..min(self.path.len(), 3) {
                             let i = self.path.len() - j;
-                            if char_start(cached_lower_path[i]) {
+                            if char_start(cached_lower_path.as_bytes()[i]) {
                                 // read char from cached path
-                                current_char = str::from_utf8(&cached_lower_path[i..])
-                                    .unwrap()
-                                    .chars()
-                                    .next()
-                                    .unwrap();
+                                current_char = cached_lower_path[i..].chars().next().unwrap();
                                 off = j;
                                 break;
                             }
@@ -637,7 +627,7 @@ impl<T> Node<T> {
 
                     // Nothing found. We can recommend to redirect to the same URL
                     // without a trailing slash if a leaf exists for that path
-                    return fix_trailing_slash && path == [b'/'] && self.value.is_some();
+                    return fix_trailing_slash && path == "/" && self.value.is_some();
                 }
 
                 return self.children[0].path_ignore_case_match_helper(
@@ -663,7 +653,7 @@ impl<T> Node<T> {
                                 || (self.children[i].node_type == NodeType::CatchAll
                                     && self.children[i].children[0].value.is_some())
                             {
-                                insensitive_path.push(b'/');
+                                insensitive_path.push('/');
                                 return true;
                             }
                             return false;
@@ -677,15 +667,15 @@ impl<T> Node<T> {
         // Nothing found.
         // Try to fix the path by adding / removing a trailing slash
         if fix_trailing_slash {
-            if path == [b'/'] {
+            if path == "/" {
                 return true;
             }
             if lower_path.len() + 1 == self.path.len()
-                && self.path[lower_path.len()] == b'/'
+                && self.path.as_bytes()[lower_path.len()] == b'/'
                 && lower_path[1..].eq_ignore_ascii_case(&self.path[1..lower_path.len()])
                 && self.value.is_some()
             {
-                insensitive_path.extend_from_slice(&self.path);
+                insensitive_path.push_str(&self.path);
                 return true;
             }
         }
@@ -695,8 +685,8 @@ impl<T> Node<T> {
 
     fn path_ignore_case_match_helper(
         &self,
-        mut path: &[u8],
-        insensitive_path: &mut Vec<u8>,
+        mut path: &str,
+        insensitive_path: &mut String,
         buf: [u8; 4],
         fix_trailing_slash: bool,
     ) -> bool {
@@ -704,11 +694,11 @@ impl<T> Node<T> {
             NodeType::Param => {
                 let mut end = 0;
 
-                while end < path.len() && path[end] != b'/' {
+                while end < path.len() && path.as_bytes()[end] != b'/' {
                     end += 1;
                 }
 
-                insensitive_path.extend_from_slice(&path[..end]);
+                insensitive_path.push_str(&path[..end]);
 
                 if end < path.len() {
                     if !self.children.is_empty() {
@@ -733,19 +723,19 @@ impl<T> Node<T> {
                     return true;
                 } else if fix_trailing_slash
                     && self.children.len() == 1
-                    && self.children[0].path == [b'/']
+                    && self.children[0].path == "/"
                     && self.children[0].value.is_some()
                 {
                     // No value found. Check if a value for this path + a
                     // trailing slash exists
-                    insensitive_path.push(b'/');
+                    insensitive_path.push('/');
                     return true;
                 }
 
                 false
             }
             NodeType::CatchAll => {
-                insensitive_path.extend_from_slice(path);
+                insensitive_path.push_str(path);
                 true
             }
             _ => unreachable!(),
@@ -770,9 +760,9 @@ const fn char_start(b: u8) -> bool {
 }
 
 // Search for a wildcard segment and check the name for invalid characters.
-fn find_wildcard(path: &[u8]) -> (Option<&[u8]>, Option<usize>, bool) {
+fn find_wildcard(path: &str) -> (Option<&str>, Option<usize>, bool) {
     // Find start
-    for (start, &c) in path.iter().enumerate() {
+    for (start, &c) in path.as_bytes().iter().enumerate() {
         // A wildcard starts with ':' (param) or '*' (catch-all)
         if c != b':' && c != b'*' {
             continue;
@@ -781,7 +771,7 @@ fn find_wildcard(path: &[u8]) -> (Option<&[u8]>, Option<usize>, bool) {
         // Find end and check for invalid characters
         let mut valid = true;
 
-        for (end, &c) in path[start + 1..].iter().enumerate() {
+        for (end, &c) in path[start + 1..].as_bytes().iter().enumerate() {
             match c {
                 b'/' => return (Some(&path[start..start + 1 + end]), Some(start), valid),
                 b':' | b'*' => valid = false,
@@ -884,9 +874,7 @@ mod tests {
         if n.priority != prio {
             panic!(
                 "priority mismatch for node '{}': found '{}', expected '{}'",
-                str::from_utf8(&n.path).unwrap(),
-                n.priority,
-                prio
+                n.path, n.priority, prio
             )
         }
 
