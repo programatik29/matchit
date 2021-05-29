@@ -16,8 +16,8 @@
 //!     matcher.insert("/home", "Welcome!")?;
 //!     matcher.insert("/users/:id", "A User")?;
 //!
-//!     let matched = matcher.at("/users/1")?;
-//!     assert_eq!(matched.params.get("id"), Some("1"));
+//!     let matched = matcher.at(b"/users/1")?;
+//!     assert_eq!(matched.params.get(b"id"), Some(b"1"));
 //!     assert_eq!(*matched.value, "A User");
 //!
 //!     Ok(())
